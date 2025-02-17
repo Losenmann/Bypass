@@ -32,8 +32,8 @@ CREATE VIEW IF NOT EXISTS vw_site AS
         ts.enable,
         ts.timeadd
     FROM tb_site ts
-    INNER JOIN tb_category tc ON ts.cat = tc.id;
-    INNER JOIN tb_resource tr ON ts.res = tr.id
+    INNER JOIN tb_category tc ON ts.cat = tc.id
+    INNER JOIN tb_resource tr ON ts.res = tr.id;
 
 INSERT INTO tb_category(name,description) VALUES('default','Default category'),('Social','Social networks'),('Media','Videos or music'),('Entertainment','Movies, books'),('Game','Game servers, game sites'),('Dev','Repositories, image registry, documentation'),('File Exchangers','File sharing, cloud drives');
 INSERT INTO tb_resource(name,description) VALUES('default','Default resource');
