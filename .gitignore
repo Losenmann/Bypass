@@ -1,1 +1,3 @@
 bypass
+*.db
+*.sock
