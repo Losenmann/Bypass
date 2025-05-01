@@ -1,3 +1,4 @@
+/system/script/add name="funcBypassctl" source=(
 :global funcBypassctl do={
     :local command $1
     :local action $2
@@ -155,3 +156,5 @@
         :return 0
     }
 }
+)
+/system/script/run funcBypassctl
