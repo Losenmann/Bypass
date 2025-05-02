@@ -144,15 +144,11 @@
     # Version
     :if (\$command = \"version\") do={
         :put \$version
-    }
-
-    # Script
-    :if (\$command = \"script\" && \$action = add) do={
-        :put \$version
+        :return 0
     }
 
     # Scheduler
-    :if (\$command = \"startup\")
+    :if (\$command = \"startup\") do={
         :if (\$action = true) do={
             :do {
                 /system/scheduler/add name=\"funcBypassctl\" on-event=\"/system/script/run funcBypassctl\" start-time=\"startup\"
@@ -160,6 +156,7 @@
             } on-error={
                 :put \"[INFO] Exists scheduler task\"
             }
+            :return 0
         }
         :if (\$action = false) do={
             :do {
@@ -168,6 +165,7 @@
             } on-error={
                 :put \"[INFO] Not exists scheduler task\"
             }
+            :return 0
         }
     }
 
@@ -180,6 +178,7 @@
         :put \"startup - Start at power on (true/false)\"
         :return 0
     }
+    :return 0
 }
 "
 /system/script/run funcBypassctl
