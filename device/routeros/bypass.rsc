@@ -7,7 +7,7 @@
     :local vdnscachesize 25
     :local vaddresslist \"bypass\"
     :local vroutetable \"rtab-bypass\"
-    :local vroutemark \"mark-bypass\"
+    :local vroutemark \"rtab-bypass\"
 
     # Setup Bypass
     :if (\$command = \"conf\" && \$action = \"setup\") do={
@@ -38,10 +38,10 @@
 
         # Add routing rule
         :do {
-            :if ([/routing/rule/find where routing-mark=\"\$vroutemark\" action=\"lookup-only-in-table\" table=\"\$vroutetable\"]) do={
+            :if ([/routing/rule/find where routing-mark=\$vroutemark action=lookup-only-in-table table=\$vroutetable]) do={
                 :put \"[INFO] Exists routing rule\"
             } else {
-                /routing/rule/add routing-mark=\"\$vroutemark\" action=\"lookup-only-in-table\" table=\"\$vroutetable\" place-before=0 comment=\"custom: rule bypass route\"
+                /routing/rule/add routing-mark=\$vroutemark action=lookup-only-in-table table=\$vroutetable place-before=0 comment=\"custom: rule bypass route\"
                 :put \"[INFO] Added routing rule successfully\"
             }
         } on-error={
@@ -50,11 +50,11 @@
 
         # Add route
         :do {
-            :if ([/ip/route/find where dst-address=\"0.0.0.0/0\" routing-table=\"\$vroutetable\"]) do={
+            :if ([/ip/route/find where dst-address=0.0.0.0/0 routing-table=\$vroutetable]) do={
                 :put \"[INFO] Exists route\"
-                /ip/route/set [/ip/route/find where dst-address=\"0.0.0.0/0\" routing-table=\"\$vroutetable\"] gateway=\"\$gateway\"
+                /ip/route/set [/ip/route/find where dst-address=0.0.0.0/0 routing-table=\$vroutetable] gateway=\$gateway
             } else {
-                /ip/route/add dst-address=\"0.0.0.0/0\" gateway=\"\$gateway\" distance=\"100\" routing-table=\"\$vroutetable\" comment=\"custom: route bypass\"
+                /ip/route/add dst-address=0.0.0.0/0 gateway=\$gateway distance=100 routing-table=\$vroutetable comment=\"custom: route bypass\"
                 :put \"[INFO] Added route successfully\"
             }
         } on-error={
@@ -63,10 +63,10 @@
 
         # Add mangle rule
         :do {
-            :if ([/ip/firewall/mangle/find where chain=\"prerouting\" dst-address-list=\"\$vaddresslist\" action=\"mark-routing\" new-routing-mark=\"\$vroutemark\"]) do={
+            :if ([/ip/firewall/mangle/find where chain=prerouting dst-address-list=\$vaddresslist action=mark-routing new-routing-mark=\$vroutemark]) do={
                 :put \"[INFO] Exists mangle rule\"
             } else {
-                /ip/firewall/mangle/add chain=\"prerouting\" dst-address-list=\"\$vaddresslist\" action=\"mark-routing\" new-routing-mark=\"\$vroutemark\" passthrough=\"yes\" place-before=\"0\" comment=\"custom: route marking bypass\"
+                /ip/firewall/mangle/add chain=prerouting dst-address-list=\$vaddresslist action=mark-routing new-routing-mark=\$vroutemark passthrough=yes place-before=0 comment=\"custom: route marking bypass\"
                 :put \"[INFO] Added mangle rule successfully\"
             }
         } on-error={
@@ -79,7 +79,7 @@
     :if (\$command = \"conf\" && \$action = \"rm\") do={
         # Remove mangle rule
         :do {
-            /ip/firewall/mangle/remove [/ip/firewall/mangle/find where chain=\"prerouting\" dst-address-list=\"\$vaddresslist\" action=\"mark-routing\" new-routing-mark=\"\$vroutemark\"]
+            /ip/firewall/mangle/remove [/ip/firewall/mangle/find where chain=prerouting dst-address-list=\$vaddresslist action=mark-routing new-routing-mark=\$vroutemark]
             :put \"[INFO] Removed mangle rule successfully\"
         } on-error={
             :put \"[WARN] Error remove mangle rule\"
@@ -87,7 +87,7 @@
 
         # Remove route
         :do {
-            /ip/route/remove [/ip/route/find where dst-address=\"0.0.0.0/0\" routing-table=\"\$vroutetable\"]
+            /ip/route/remove [/ip/route/find where dst-address=0.0.0.0/0 routing-table=\$vroutetable]
             :put \"[INFO] Removed route successfully\"
         } on-error={
             :put \"[WARN] Error remove route\"
@@ -95,7 +95,7 @@
 
         # Remove routing rule
         :do {
-            /routing/rule/remove [/routing/rule/find where routing-mark=\"\$vroutemark\" action=\"lookup-only-in-table\" table=\"\$vroutetable\"]
+            /routing/rule/remove [/routing/rule/find where routing-mark=\$vroutemark action=lookup-only-in-table table=\$vroutetable]
             :put \"[INFO] Removed routing rule successfully\"
         } on-error={
             :put \"[WARN] Error remove routing rule\"
@@ -103,7 +103,7 @@
 
         # Remove route table
         :do {
-            /routing/table/remove [/routing/table/find name=\"\$vroutetable\"] 
+            /routing/table/remove [/routing/table/find name=\$vroutetable] 
             :put \"[INFO] Removed route table successfully\"
         } on-error={
             :put \"[WARN] Error remove route table\"
@@ -119,25 +119,25 @@
         :return 0
     }
 
-    # Start Bypass
-    :if (\$command = \"svc\" && \$action = true) do={
-        :do {
-            /ip/firewall/mangle/enable [/ip/firewall/mangle/find where chain=\"prerouting\" dst-address-list=\"\$vaddresslist\" action=\"mark-routing\" new-routing-mark=\"\$vroutemark\"]
-            :return 0
-        } on-error={
-            :put \"[ERROR] Not found mangle rule. Please run the setup process «\$funcBypassctl conf 1 \\\"VPN_interface/address\\\"»\"
-            :return 1
+    # Service control
+    :if (\$command = \"svc\") do={
+        :if ($action = true) do={
+            :do {
+                /ip/firewall/mangle/enable [/ip/firewall/mangle/find where chain=\"prerouting\" dst-address-list=\"\$vaddresslist\" action=\"mark-routing\" new-routing-mark=\"\$vroutemark\"]
+                :return 0
+            } on-error={
+                :put \"[ERROR] Not found mangle rule. Please run the setup process «\$funcBypassctl conf 1 \\\"VPN_interface/address\\\"»\"
+                :return 1
+            }
         }
-    }
-
-    # Stop Bypass
-    :if (\$command = \"svc\" && \$action = false) do={
-        :do {
-            /ip/firewall/mangle/disable [/ip/firewall/mangle/find where chain=\"prerouting\" dst-address-list=\"\$vaddresslist\" action=\"mark-routing\" new-routing-mark=\"\$vroutemark\"]
-            :return 0
-        } on-error={
-            :put \"[ERROR] Not found mangle rule. Please run the setup process «\$funcBypassctl conf 1 \\\"VPN_interface/address\\\"»\"
-            :return 1
+        :if (\$action = false) do={
+            :do {
+                /ip/firewall/mangle/disable [/ip/firewall/mangle/find where chain=\"prerouting\" dst-address-list=\"\$vaddresslist\" action=\"mark-routing\" new-routing-mark=\"\$vroutemark\"]
+                :return 0
+            } on-error={
+                :put \"[ERROR] Not found mangle rule. Please run the setup process «\$funcBypassctl conf 1 \\\"VPN_interface/address\\\"»\"
+                :return 1
+            }
         }
     }
 
