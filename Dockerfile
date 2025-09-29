@@ -32,6 +32,7 @@ FROM python:3.13.7-alpine3.22 AS app
 ARG ARG_AWG_EXPORTER_REDIS_HOST="127.0.0.1"
 ENV AWG_EXPORTER_REDIS_HOST=${ARG_AWG_EXPORTER_REDIS_HOST}
 ADD --chmod=0755 https://raw.githubusercontent.com/amnezia-vpn/amneziawg-exporter/refs/heads/main/exporter.py /usr/bin/awg-exporter
+COPY ./src/* /
 WORKDIR /opt/app
 RUN mkdir -p /opt/app/data /etc/redis \
     && apk add --no-cache \
@@ -41,46 +42,17 @@ RUN mkdir -p /opt/app/data /etc/redis \
         openresolv \
         redis \
         curl \
-    && pip3 install --no-cache-dir --break-system-packages -r requirements.txt \
+    && pip3 install --no-cache-dir --break-system-packages -r /etc/requirements.txt \
     && printf "%s\n%s\n%s\n%s\n%s\n" \
         "#!/bin/bash" \
         "awg-quick up wg0; sleep 3" \
-        "nft -f /etc/nftables.conf" \
+        "nft -f /etc/nftables.d/bypass.nft" \
         "redis-server /etc/redis/redis.conf" \
         "awg-exporter" \
         > /entrypoint.sh \
-    && printf "%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n" \
-        "bind 0.0.0.0" \
-        "protected-mode no" \
-        "port 6379" \
-        "tcp-backlog 511" \
-        "timeout 0" \
-        "tcp-keepalive 300" \
-        "daemonize yes" \
-        "pidfile /run/redis.pid" \
-        "loglevel warning" \
-        "databases 16" \
-        "always-show-logo no" \
-        "set-proc-title no" \
-        "save 3600 1" \
-        "stop-writes-on-bgsave-error no" \
-        "rdbcompression yes" \
-        "rdbchecksum yes" \
-        "dir /opt/app/data" \
-        > /etc/redis/redis.conf \
-    && echo "\
-IyEvdXNyL3NiaW4vbmZ0IC1mCgp0YWJsZSBpcCBuYXQgewogICAgY2hhaW4gUE9TVFJPVVRJTkcg\
-ewogICAgICAgIHR5cGUgbmF0IGhvb2sgcG9zdHJvdXRpbmcgcHJpb3JpdHkgc3JjbmF0OyBwb2xp\
-Y3kgYWNjZXB0OwogICAgICAgIG9pZm5hbWUgIndnMCIgY291bnRlciBtYXNxdWVyYWRlCiAgICB9\
-Cn0KCnRhYmxlIGlwIG1hbmdsZSB7CiAgICBjaGFpbiBQT1NUUk9VVElORyB7CiAgICAgICAgdHlw\
-ZSBmaWx0ZXIgaG9vayBwb3N0cm91dGluZyBwcmlvcml0eSBtYW5nbGU7IHBvbGljeSBhY2NlcHQ7\
-CiAgICAgICAgaXAgcHJvdG9jb2wgdWRwIG1ldGEgbWFyayAweDAwMDBjYTZjIGNvdW50ZXIgY29t\
-bWVudCAiQ09OTk1BUksiCiAgICB9CgogICAgY2hhaW4gUFJFUk9VVElORyB7CiAgICAgICAgdHlw\
-ZSBmaWx0ZXIgaG9vayBwcmVyb3V0aW5nIHByaW9yaXR5IG1hbmdsZTsgcG9saWN5IGFjY2VwdDsK\
-ICAgICAgICBpcCBwcm90b2NvbCB1ZHAgY291bnRlciBjb21tZW50ICJDT05OTUFSSyIKICAgIH0K\
-fQo=" | base64 -d > /etc/nftables.conf \
     && chmod 0755 /entrypoint.sh
 COPY --from=awg --chmod=0755 /usr/bin/amneziawg-go /usr/bin/
+
 COPY --from=awg-tools --chmod=0755 /usr/bin/awg /usr/bin/awg-quick /usr/bin/wg /usr/bin/wg-quick /usr/bin/
 COPY ./healtz.sh /usr/bin/awg-health
 ENTRYPOINT ["/entrypoint.sh"]
