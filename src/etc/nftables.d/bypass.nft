@@ -1,0 +1,20 @@
+#!/usr/sbin/nft -f
+
+table ip nat {
+    chain POSTROUTING {
+        type nat hook postrouting priority srcnat; policy accept;
+        oifname "wg0" counter masquerade
+    }
+}
+
+table ip mangle {
+    chain POSTROUTING {
+        type filter hook postrouting priority mangle; policy accept;
+        ip protocol udp meta mark 0x0000ca6c counter comment "CONNMARK"
+    }
+
+    chain PREROUTING {
+        type filter hook prerouting priority mangle; policy accept;
+        ip protocol udp counter comment "CONNMARK"
+    }
+}
