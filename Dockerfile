@@ -32,9 +32,9 @@ FROM python:3.13.7-alpine3.22 AS app
 ARG ARG_AWG_EXPORTER_REDIS_HOST="127.0.0.1"
 ENV AWG_EXPORTER_REDIS_HOST=${ARG_AWG_EXPORTER_REDIS_HOST}
 ADD --chmod=0755 https://raw.githubusercontent.com/amnezia-vpn/amneziawg-exporter/refs/heads/main/exporter.py /usr/bin/awg-exporter
-COPY ./src/* /
-WORKDIR /opt/app
-RUN mkdir -p /opt/app/data /etc/redis \
+COPY ./src/ /
+WORKDIR /opt/bypass
+RUN mkdir -p /opt/bypass/redis \
     && apk add --no-cache \
         bash \
         iproute2 \
@@ -43,16 +43,7 @@ RUN mkdir -p /opt/app/data /etc/redis \
         redis \
         curl \
     && pip3 install --no-cache-dir --break-system-packages -r /etc/requirements.txt \
-    && printf "%s\n%s\n%s\n%s\n%s\n" \
-        "#!/bin/bash" \
-        "awg-quick up wg0; sleep 3" \
-        "nft -f /etc/nftables.d/bypass.nft" \
-        "redis-server /etc/redis/redis.conf" \
-        "awg-exporter" \
-        > /entrypoint.sh \
     && chmod 0755 /entrypoint.sh
 COPY --from=awg --chmod=0755 /usr/bin/amneziawg-go /usr/bin/
-
 COPY --from=awg-tools --chmod=0755 /usr/bin/awg /usr/bin/awg-quick /usr/bin/wg /usr/bin/wg-quick /usr/bin/
-COPY ./healtz.sh /usr/bin/awg-health
 ENTRYPOINT ["/entrypoint.sh"]
