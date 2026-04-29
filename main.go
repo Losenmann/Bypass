@@ -18,38 +18,45 @@ type NFTManager struct {
 	Rule   []*nftables.Rule
 }
 
+type IPRouteManager struct {
+	Route *netlink.Route
+	Rule  *netlink.Rule
+}
+
 var (
-	nft = NewNFTManager()
+	nft            = NewNFTManager()
+	iproute        = NewIPRouteManager()
+	rt      byte   = 85
+	mark    uint32 = 85
+	nextHop string = "tasks.vpn"
 )
 
+func NewIPRouteManager() *IPRouteManager {
+	manager := &IPRouteManager{
+		Route: &netlink.Route{
+			Dst:   nil,
+			Gw:    net.ParseIP(resolv(nextHop)),
+			Table: int(rt),
+		},
+		Rule: &netlink.Rule{
+			Mark:  mark,
+			Mask:  new(uint32(0xffffffff)),
+			Table: int(rt),
+		},
+	}
+	return manager
+}
+
 func main() {
-
-	route := &netlink.Route{
-		Dst:   nil,
-		Gw:    net.ParseIP(resolv("tasks.vpn")),
-		Table: 85,
-	}
-
-	if err := netlink.RouteAdd(route); err != nil {
-		panic(err)
-	}
-
-	rule := netlink.NewRule()
-	rule.Mark = 0x85
-	rule.Mask = new(uint32(0xffffffff))
-	rule.Table = 85
-	if err := netlink.RuleAdd(rule); err != nil {
-		panic(err)
-	}
-
+	RunIPRoute()
 	RunNFTables()
 
 	ticker := time.NewTicker(3 * time.Second)
 	defer ticker.Stop()
 	for range ticker.C {
-		if newTTT := resolv("tasks.vpn"); newTTT != route.Gw.String() {
-			route.Gw = net.ParseIP(newTTT)
-			if err := netlink.RouteReplace(route); err != nil {
+		if newTTT := resolv("tasks.vpn"); newTTT != iproute.Route.Gw.String() {
+			iproute.Route.Gw = net.ParseIP(newTTT)
+			if err := netlink.RouteReplace(iproute.Route); err != nil {
 				panic(err)
 			}
 		}
@@ -182,6 +189,19 @@ func (n *NFTManager) Setup() {
 	n.Conn.AddRule(n.Rule[3])
 	n.Conn.AddRule(n.Rule[4])
 	n.Conn.Flush()
+}
+
+func (n *IPRouteManager) Setup() {
+	if err := netlink.RouteAdd(n.Route); err != nil {
+		panic(err)
+	}
+	if err := netlink.RuleAdd(n.Rule); err != nil {
+		panic(err)
+	}
+}
+
+func RunIPRoute() {
+	iproute.Setup()
 }
 
 func RunNFTables() {
