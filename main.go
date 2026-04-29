@@ -1,118 +1,321 @@
 package main
 
 import (
-	"context"
-	"flag"
-	"fmt"
-	"log/slog"
-	"os"
-	"bypass/resolver"
-	"bypass/firewall"
-	"bypass/tools"
+	"net"
+	_ "sync"
+	"time"
+	"github.com/vishvananda/netlink"
+	"github.com/google/nftables"
+	"github.com/google/nftables/expr"
 )
+
+type NFTManager struct {
+	Conn   nftables.Conn
+	fwmark []byte
+	Table  *nftables.Table
+	Sets   []*nftables.Set
+	Chain  []*nftables.Chain
+	Rule   []*nftables.Rule
+}
 
 var (
-	LogLVL = new(uint)
+	nft = NewNFTManager()
 )
-
-func getEnv(key string, fallback any) any {
-	value, exists := os.LookupEnv(key)
-	if !exists {
-		return fallback
-	}
-	return value
-}
-
-func init() {
-	LogLVL = flag.Uint("l", getEnv("BYPASS_LOG_LVL", uint(1)).(uint), "Log lvl")
-	flag.Parse()
-	switch *LogLVL {
-	case 1:
-		slog.SetDefault(slog.New(&CustomHandler{level: slog.LevelDebug}))
-	case 2:
-		slog.SetDefault(slog.New(&CustomHandler{level: slog.LevelInfo}))
-	case 3:
-		slog.SetDefault(slog.New(&CustomHandler{level: slog.LevelWarn}))
-	case 4:
-		slog.SetDefault(slog.New(&CustomHandler{level: slog.LevelError}))
-	default:
-		slog.SetDefault(slog.New(&CustomHandler{level: slog.LevelInfo}))
-	}
-}
 
 func main() {
-	if resolver.Args.Enable {
-		resolver.Run()
+
+	route := &netlink.Route{
+		Dst:   nil,
+		Gw:    net.ParseIP(resolv("tasks.vpn")),
+		Table: 85,
 	}
-	if firewall.Args.Enable {
-		firewall.Run()
+
+	if err := netlink.RouteAdd(route); err != nil {
+		panic(err)
 	}
-	if tools.Args.MetricsEnable {
-		tools.RunMetrics()
+
+	rule := netlink.NewRule()
+	rule.Mark = 0x85
+	rule.Mask = new(uint32(0xffffffff))
+	rule.Table = 85
+	if err := netlink.RuleAdd(rule); err != nil {
+		panic(err)
 	}
-	select {}	
-}
 
-type CustomHandler struct {
-	level slog.Level
-}
+	RunNFTables()
 
-func (h *CustomHandler) Enabled(_ context.Context, level slog.Level) bool {
-	return level >= h.level
-}
-
-func (h *CustomHandler) Handle(_ context.Context, record slog.Record) error {
-	timestamp := record.Time.Format("2006/01/02 15:04:05")
-
-	// Извлекаем тег (если есть)
-	tag := ""
-	record.Attrs(func(a slog.Attr) bool {
-		if a.Key == "tag" {
-			tag = fmt.Sprintf("[%s]", a.Value.String())
+	ticker := time.NewTicker(3 * time.Second)
+	defer ticker.Stop()
+	for range ticker.C {
+		if newTTT := resolv("tasks.vpn"); newTTT != route.Gw.String() {
+			route.Gw = net.ParseIP(newTTT)
+			if err := netlink.RouteReplace(route); err != nil {
+				panic(err)
+			}
 		}
-		return true
-	})
+	}
+}
 
-	// Определяем цвет и поток вывода
-	var (
-		color  string
-		output *os.File
-	)
-
-	switch {
-	case record.Level == slog.LevelDebug:
-		color, output = colorPurple, os.Stdout
-	case record.Level == slog.LevelInfo:
-		color, output = colorBlue, os.Stdout
-	case record.Level == slog.LevelWarn:
-		color, output = colorYellow, os.Stderr
-	case record.Level == slog.LevelError:
-		color, output = colorRed, os.Stderr
+func NewNFTManager() *NFTManager {
+	manager := &NFTManager{
+		fwmark: []byte{0x85, 0x00, 0x00, 0x00},
+		Conn:   nftables.Conn{},
+		Table: &nftables.Table{
+			Family: nftables.TableFamilyINet,
+			Name:   "bypass",
+		},
 	}
 
-	// Форматированный вывод
-	fmt.Fprintf(output, "%s %s%s%s %s %s\n",
-		timestamp,
-		color, record.Level.String(), colorReset,
-		tag,
-		record.Message,
-	)
+	manager.Sets = []*nftables.Set{
+		{
+			Table:    manager.Table,
+			Name:     "default_ipv4",
+			KeyType:  nftables.TypeIPAddr,
+			Interval: true,
+			Comment:  "default IPv4 address list",
+		},
+		{
+			Table:    manager.Table,
+			Name:     "default_ipv6",
+			KeyType:  nftables.TypeIP6Addr,
+			Interval: true,
+			Comment:  "default IPv6 address list",
+		},
+	}
 
-	return nil
+	manager.Chain = []*nftables.Chain{
+		{
+			Table:    manager.Table,
+			Name:     "prerouting",
+			Type:     nftables.ChainTypeFilter,
+			Hooknum:  nftables.ChainHookPrerouting,
+			Priority: nftables.ChainPriorityMangle,
+		},
+		{
+			Table:    manager.Table,
+			Name:     "output",
+			Type:     nftables.ChainTypeRoute,
+			Hooknum:  nftables.ChainHookOutput,
+			Priority: nftables.ChainPriorityMangle,
+		},
+		{
+			Table:    manager.Table,
+			Name:     "postrouting",
+			Type:     nftables.ChainTypeNAT,
+			Hooknum:  nftables.ChainHookPostrouting,
+			Priority: nftables.ChainPriorityNATSource,
+		},
+	}
+
+	manager.Rule = []*nftables.Rule{
+		{
+			Table: manager.Table,
+			Chain: manager.Chain[0],
+			Exprs: []expr.Any{
+				&expr.Payload{OperationType: expr.PayloadLoad, DestRegister: 1, Base: expr.PayloadBaseNetworkHeader, Offset: 16, Len: 4},
+				&expr.Lookup{SourceRegister: 1, SetID: manager.Sets[0].ID, SetName: manager.Sets[0].Name},
+				&expr.Immediate{Register: 1, Data: manager.fwmark},
+				&expr.Meta{Key: expr.MetaKeyMARK, Register: 1, SourceRegister: true},
+				&expr.Counter{},
+			},
+		},
+		{
+			Table: manager.Table,
+			Chain: manager.Chain[0],
+			Exprs: []expr.Any{
+				&expr.Payload{OperationType: expr.PayloadLoad, DestRegister: 1, Base: expr.PayloadBaseNetworkHeader, Offset: 24, Len: 16},
+				&expr.Lookup{SourceRegister: 1, SetID: manager.Sets[1].ID, SetName: manager.Sets[1].Name},
+				&expr.Immediate{Register: 1, Data: manager.fwmark},
+				&expr.Meta{Key: expr.MetaKeyMARK, Register: 1, SourceRegister: true},
+				&expr.Counter{},
+			},
+		},
+		{
+			Table: manager.Table,
+			Chain: manager.Chain[1],
+			Exprs: []expr.Any{
+				&expr.Payload{OperationType: expr.PayloadLoad, DestRegister: 1, Base: expr.PayloadBaseNetworkHeader, Offset: 16, Len: 4},
+				&expr.Lookup{SourceRegister: 1, SetID: manager.Sets[0].ID, SetName: manager.Sets[0].Name},
+				&expr.Immediate{Register: 1, Data: manager.fwmark},
+				&expr.Meta{Key: expr.MetaKeyMARK, Register: 1, SourceRegister: true},
+				&expr.Counter{},
+			},
+		},
+		{
+			Table: manager.Table,
+			Chain: manager.Chain[1],
+			Exprs: []expr.Any{
+				&expr.Payload{OperationType: expr.PayloadLoad, DestRegister: 1, Base: expr.PayloadBaseNetworkHeader, Offset: 24, Len: 16},
+				&expr.Lookup{SourceRegister: 1, SetID: manager.Sets[1].ID, SetName: manager.Sets[1].Name},
+				&expr.Immediate{Register: 1, Data: manager.fwmark},
+				&expr.Meta{Key: expr.MetaKeyMARK, Register: 1, SourceRegister: true},
+				&expr.Counter{},
+			},
+		},
+		{
+			Table: manager.Table,
+			Chain: manager.Chain[2],
+			Exprs: []expr.Any{
+				&expr.Meta{Key: expr.MetaKeyMARK, Register: 1},
+				&expr.Cmp{Op: expr.CmpOpEq, Register: 1, Data: manager.fwmark},
+				&expr.Counter{},
+				&expr.Masq{},
+			},
+		},
+	}
+	return manager
 }
 
-func (h *CustomHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
-	return h
+func (n *NFTManager) Setup() {
+	n.Conn.FlushTable(n.Table)
+	n.Conn.DelTable(n.Table)
+	n.Conn.Flush()
+	n.Conn.AddTable(n.Table)
+	n.Conn.AddChain(n.Chain[0])
+	n.Conn.AddChain(n.Chain[1])
+	n.Conn.AddChain(n.Chain[2])
+	n.Conn.AddSet(n.Sets[0], nil)
+	n.Conn.AddSet(n.Sets[1], nil)
+	n.Conn.AddRule(n.Rule[0])
+	n.Conn.AddRule(n.Rule[1])
+	n.Conn.AddRule(n.Rule[2])
+	n.Conn.AddRule(n.Rule[3])
+	n.Conn.AddRule(n.Rule[4])
+	n.Conn.Flush()
 }
 
-func (h *CustomHandler) WithGroup(name string) slog.Handler {
-	return h
+func RunNFTables() {
+	nft.Setup()
+	//      resp, _ := consumer.GetCIDRs("", false)
+	nft.AddSetElem("default", new([]string{"0.0.0.0/0"}))
+
 }
 
-const (
-	colorReset  = "\033[0m"
-	colorBlue   = "\033[1;34m"
-	colorPurple = "\033[1;35m"
-	colorYellow = "\033[1;33m"
-	colorRed    = "\033[1;31m"
-)
+func (n *NFTManager) AddSetElem(name string, cidrs *[]string) (err error) {
+	var sets4, sets6 *nftables.Set
+	var elem4, elem6 []nftables.SetElement
+
+	if resp, err := n.Conn.GetSets(n.Table); err != nil {
+		return err
+	} else {
+		for _, v := range resp {
+			switch v.Name {
+			case name + "_ipv4":
+				sets4 = v
+			case name + "_ipv6":
+				sets6 = v
+			}
+		}
+
+		for _, v := range *cidrs {
+			first, end, _ := SetElemGenStartEnd(v)
+			if first.To4() != nil {
+				elem4 = append(elem4, []nftables.SetElement{{Key: first.To4(), IntervalEnd: false}, {Key: end.To4(), IntervalEnd: true}}...)
+				continue
+			}
+			if first.To16() != nil {
+				elem6 = append(elem6, []nftables.SetElement{{Key: first.To16(), IntervalEnd: false}, {Key: end.To16(), IntervalEnd: true}}...)
+				continue
+			}
+
+		}
+
+		if n.Conn.SetAddElements(sets4, elem4) != nil {
+			return err
+		}
+		if n.Conn.SetAddElements(sets6, elem6) != nil {
+			return err
+		}
+		n.Conn.Flush()
+		return nil
+	}
+}
+
+func (n *NFTManager) AddSet(name, desc string, flush bool) {
+	if flush {
+		resp, _ := n.Conn.GetSets(n.Table)
+		for _, v := range resp {
+			n.Conn.DelSet(v)
+		}
+		n.Conn.Flush()
+		n.Sets = []*nftables.Set{
+			{
+				Table:    n.Table,
+				Name:     name + "_ipv4",
+				KeyType:  nftables.TypeIPAddr,
+				Interval: true,
+				Comment:  desc,
+			},
+			{
+				Table:    n.Table,
+				Name:     name + "_ipv6",
+				KeyType:  nftables.TypeIP6Addr,
+				Interval: true,
+				Comment:  desc,
+			},
+		}
+	} else {
+		n.Sets = append(n.Sets, []*nftables.Set{
+			{
+				Table:    n.Table,
+				Name:     name + "_ipv4",
+				KeyType:  nftables.TypeIPAddr,
+				Interval: true,
+				Comment:  desc,
+			},
+			{
+				Table:    n.Table,
+				Name:     name + "_ipv6",
+				KeyType:  nftables.TypeIP6Addr,
+				Interval: true,
+				Comment:  desc,
+			},
+		}...)
+	}
+	for _, v := range n.Sets {
+		n.Conn.AddSet(v, nil)
+	}
+	n.Conn.Flush()
+}
+
+func SetElemGenStartEnd(cidr string) (first, end net.IP, err error) {
+	_, ipnet, err := net.ParseCIDR(cidr)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	ip := ipnet.IP
+	mask := ipnet.Mask
+	ipLen := len(ip)
+
+	// Быстрое создание IP с правильной длиной
+	first = make(net.IP, ipLen)
+	end = make(net.IP, ipLen)
+
+	// Один проход по байтам
+	for i := range ip {
+		first[i] = ip[i] & mask[i]
+		end[i] = ip[i] | ^mask[i]
+
+	}
+
+	// Быстрый инкремент
+	for i := ipLen - 1; i >= 0; i-- {
+		end[i]++
+		if end[i] > 0 {
+			break
+		}
+	}
+	return first, end, nil
+}
+
+func resolv(dns string) string {
+	if ips, err := net.LookupIP(dns); err != nil {
+		panic(err)
+	} else {
+		for _, ip := range ips {
+			return ip.String()
+		}
+	}
+	return ""
+}
