@@ -6,3 +6,36 @@
 Данные для долгосрочного хранения, хранятся в БД на основе SQLite.
 Во время инициализации, данные из БД копируются в систему кэширования, на основе Memcached.
 Для оперативного взаимодействия с данные исполуется сервис кеширования.
+
+### Environment and Key CLI
+##
+|Environment|Key|
+|-----------|---|
+|-----------|--|
+--gateway.routing.rip=true
+--gateway.routing.ospf=true
+--gateway.routing.bgp=true
+--gateway.routing.nextHop=task.vpn
+--gateway.routing.nextHop.interval=5s
+--gateway.routing.table.id=144
+--gateway.routing.table.name=bypass
+--gateway.firewall.backend=iptables/nftables
+--cache.backend=redis
+--cache.uri=
+--database.backend=postgres
+--database.uri=
+--metrics.prometheus.port=9090
+--metrics.prometheus.path=/metrics
+--api.port=9091
+--api.path=/api
+--health.port=9090
+--health.path=/metrics
+--bootstrap.
+--example.ntables
+--example.iptables
+--example.bird
+--control.reload
+--control.foreground
+--control.log.lvl
+--control.log.path
+--control.log.stdout
